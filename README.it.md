@@ -51,8 +51,33 @@ per fermarlo:
 pkill -f "python server.py"
 ```
 
-Requisiti: macOS con Apple Silicon (testato su M5 Pro), Python 3.9+, ~250 MB di
-dipendenze (PyTorch) e 64 MB di pesi del modello.
+Requisiti: macOS con Apple Silicon (testato su M5 Pro), Python 3.9+ e ~250 MB di
+dipendenze (PyTorch). I pesi si scaricano una volta sola — vedi sotto.
+
+---
+
+## I pesi dei modelli
+
+I checkpoint **non** stanno nel repository: sono nella
+**[release v1.0.0](https://github.com/cyper73/blade-runner-esper/releases/tag/v1.0.0)**. Si scaricano una volta sola,
+nelle cartelle che il motore si aspetta:
+
+```bash
+mkdir -p models/whisper
+gh release download v1.0.0 --pattern "*.pth" -D models/
+gh release download v1.0.0 --pattern "ggml-small.bin" -D models/whisper/
+```
+
+Senza `gh`, dalla pagina della release: basta mettere ogni file al suo posto.
+
+| file | peso | ruolo |
+|---|---|---|
+| `4x_foolhardy_Remacri.pth` | 64 MB | **predefinito** — il migliore su testo e dettaglio |
+| `4x-UltraSharp.pth` | 64 MB | alternativa — più inciso, più ringing |
+| `RealESRGAN_x4plus.pth` | 64 MB | il checkpoint Real-ESRGAN originale |
+| `ggml-small.bin` | 465 MB | whisper.cpp, voce locale |
+
+`ESPER_MODEL` sceglie un altro checkpoint, `WHISPER_MODEL` un'altra taglia di whisper.
 
 ---
 

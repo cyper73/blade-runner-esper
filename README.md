@@ -75,6 +75,31 @@ Full setup from scratch — Python packages, Homebrew tools, model weights — i
 
 ---
 
+## Model weights
+
+The checkpoints are **not** in the repository — they live in the
+**[v1.0.0 release](https://github.com/cyper73/blade-runner-esper/releases/tag/v1.0.0)**. Download them once, into the folders
+the engine expects:
+
+```bash
+mkdir -p models/whisper
+gh release download v1.0.0 --pattern "*.pth" -D models/
+gh release download v1.0.0 --pattern "ggml-small.bin" -D models/whisper/
+```
+
+Without `gh`, take them from the release page and drop each file where it belongs.
+
+| file | size | role |
+|---|---|---|
+| `4x_foolhardy_Remacri.pth` | 64 MB | **default** — best on text and detail |
+| `4x-UltraSharp.pth` | 64 MB | alternate — sharper, more ringing |
+| `RealESRGAN_x4plus.pth` | 64 MB | the original Real-ESRGAN checkpoint |
+| `ggml-small.bin` | 465 MB | whisper.cpp, local voice control |
+
+`ESPER_MODEL` picks a different checkpoint, `WHISPER_MODEL` a different whisper size.
+
+---
+
 ## Platforms
 
 | Platform | Status |
