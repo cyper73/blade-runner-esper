@@ -1,0 +1,8 @@
+# Core — versions tested on macOS 27 / Apple M5 Pro, Python 3.9
+# On Linux/Windows with a newer Python, relax the torch pin (see REQUIREMENTS.md §10).
+numpy==1.26.4
+torch==2.2.2
+pillow==11.3.0
+fastapi==0.128.8
+uvicorn==0.39.0
+python-multipart==0.0.20

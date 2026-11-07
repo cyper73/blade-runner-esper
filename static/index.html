@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESPER — Photo Analysis Unit</title>
+<link rel="stylesheet" href="/static/css/esper.css">
+</head>
+<body>
+  <!-- Filtri immagine: matrici di colore vere, non approssimazioni CSS -->
+  <svg id="img-filters" width="0" height="0" aria-hidden="true" focusable="false"
+       style="position:absolute;width:0;height:0;overflow:hidden">
+    <defs>
+      <!-- INFRAROSSO: falso colore. Il verde (vegetazione) va nel rosso,
+           il blu (cielo) nel verde-ciano. È il canale IR che diventa visibile. -->
+      <filter id="f-ir" color-interpolation-filters="sRGB">
+        <!-- IRG: il verde (clorofilla che riflette l'IR) va nel ROSSO,
+             il rosso visibile va nel blu. Vegetazione rossa, cielo freddo. -->
+        <feColorMatrix type="matrix" values="
+          0     1.55  0    -0.65  0.02
+          0.10  0     0.15  0     0
+          0.50  0     0.12  0     0
+          0     0     0     1     0"/>
+      </filter>
+      <!-- TERMICO: la luminanza diventa temperatura — blu, magenta, rosso, giallo, bianco -->
+      <filter id="f-thermal" color-interpolation-filters="sRGB">
+        <feColorMatrix type="saturate" values="0"/>
+        <!-- stira la gamma prima della mappa: senza, un'immagine chiara
+             resta tutta nella metà calda e il blu non compare mai -->
+        <feComponentTransfer>
+          <feFuncR type="linear" slope="1.45" intercept="-0.22"/>
+          <feFuncG type="linear" slope="1.45" intercept="-0.22"/>
+          <feFuncB type="linear" slope="1.45" intercept="-0.22"/>
+        </feComponentTransfer>
+        <feComponentTransfer>
+          <feFuncR type="table" tableValues="0.01 0.55 1.00 1.00 1.00"/>
+          <feFuncG type="table" tableValues="0.00 0.00 0.16 0.78 1.00"/>
+          <feFuncB type="table" tableValues="0.18 0.62 0.02 0.00 0.92"/>
+        </feComponentTransfer>
+      </filter>
+    </defs>
+  </svg>
+
+<div id="room">
+  <div id="bezel">
+    <div id="screen">
+
+      <!-- ───────────────────────── top status bar ───────────────────────── -->
+      <header id="topbar">
+        <div class="brand">
+          <span class="logo">ESPER</span>
+          <span class="sub">PHOTO ANALYSIS UNIT · TYRELL CORP. MODEL 5</span>
+        </div>
+        <div class="readouts">
+          <div class="ro"><span class="k">FILE</span><span class="v" id="ro-file">—</span></div>
+          <div class="ro"><span class="k">SRC</span><span class="v" id="ro-src">— × —</span></div>
+          <div class="ro"><span class="k">MAG</span><span class="v" id="ro-mag">1.00×</span></div>
+          <div class="ro"><span class="k">LOC</span><span class="v" id="ro-loc">0000 / 0000</span></div>
+          <div class="ro"><span class="k">MODE</span><span class="v mode-badge" id="mode-badge">AI</span></div>
+        </div>
+        <div class="status">
+          <button class="btn icon" id="btn-full" title="Full screen — il monitor occupa tutto lo schermo">⛶</button>
+          <span class="led" id="led"></span>
+          <span id="status-text">STANDBY</span>
+          <span class="clock" id="clock">--:--:--</span>
+        </div>
+      </header>
+
+      <!-- ───────────────────────────── main deck ────────────────────────── -->
+      <main id="deck">
+
+        <!-- left rail: vertical scale + coordinate entry -->
+        <aside id="rail-left">
+          <div class="rail-title">SCALE / Y</div>
+          <div class="scale" id="scale-y">
+            <div class="scale-ticks" id="scale-y-ticks"></div>
+            <div class="scale-marker" id="scale-y-marker"></div>
+            <div class="scale-readout" id="scale-y-readout">0000</div>
+          </div>
+          <div class="rail-tabs" role="tablist">
+            <button class="rail-tab on" data-rail="coords" role="tab">COORDS</button>
+            <button class="rail-tab" data-rail="meta" role="tab">META</button>
+          </div>
+
+          <div id="rail-coords">
+            <div class="coord-grid">
+              <label>ZM<input id="in-zm" inputmode="numeric" maxlength="4" value="1000" aria-label="zoom"></label>
+              <label>NS<input id="in-ns" inputmode="numeric" value="0" aria-label="north south"></label>
+              <label>EW<input id="in-ew" inputmode="numeric" value="0" aria-label="east west"></label>
+            </div>
+            <button class="btn small" id="btn-goto">GO TO COORDINATES</button>
+            <div class="hint">ZM = ingrandimento · NS/EW = centro in pixel dell'originale</div>
+          </div>
+
+          <div id="rail-meta" class="hidden">
+            <div id="meta-list"><div class="mrow"><span class="mv">no frame loaded</span></div></div>
+          </div>
+
+          <div class="rail-title">MANUAL RANGE</div>
+          <div class="range-row">
+            <input id="in-a" inputmode="numeric" value="224" aria-label="from">
+            <span>TO</span>
+            <input id="in-b" inputmode="numeric" value="176" aria-label="to">
+          </div>
+          <button class="btn small" id="btn-range">ENHANCE RANGE</button>
+          <div class="hint">Le unità sono pixel dell'immagine originale (0 → larghezza). Come i numeri che Deckard legge sul monitor.</div>
+        </aside>
+
+        <!-- viewport -->
+        <section id="viewport" aria-label="photo viewport">
+          <div id="world">
+            <img id="base" alt="" draggable="false">
+            <div id="tiles"></div>
+          </div>
+
+          <div id="overlay">
+            <div class="grid-lines" id="grid-lines"></div>
+            <div id="coord-grid">
+              <div class="cg-lines"></div>
+              <div class="cg-labels" id="cg-labels"></div>
+            </div>
+            <div id="tunnel"></div>
+            <div id="bracket">
+              <i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i>
+              <span class="bracket-tag" id="bracket-tag">ROI 0000–0000</span>
+            </div>
+            <div id="crosshair"><i></i><i></i><span id="ch-coord">ZM 0000 NS 0000 EW 0000</span></div>
+
+            <div class="hud tl" id="hud-tl">
+              <div class="hud-line">ESPER / ANALYSIS MODE</div>
+              <div class="hud-line dim">SCAN 1:1 · GRID 64 · LOCK —</div>
+            </div>
+            <div class="hud tr" id="hud-tr">
+              <div class="hud-line" id="hud-op">IDLE</div>
+              <div class="hud-line dim" id="hud-sub">INSERT PHOTO TO BEGIN</div>
+            </div>
+            <div id="plus" title="livello enhanced">+</div>
+            <div class="hud bl" id="hud-bl">
+              <span id="scale-strip">74000 75000 76000</span>
+            </div>
+
+            <div id="big-coords" aria-hidden="true">
+              <span><b>ZM</b><i id="bc-zm">0000</i><em id="bc-mag">1.00×</em></span>
+              <span><b>NS</b><i id="bc-ns">0000</i></span>
+              <span><b>EW</b><i id="bc-ew">0000</i></span>
+            </div>
+            <div class="hud br" id="hud-br">
+              <span id="hud-clock">--:--:--</span> · <span id="hud-frame">B-263</span>
+            </div>
+
+            <div id="scanline"></div>
+
+            <!-- insert / boot overlay -->
+            <div id="insert">
+              <div class="insert-inner">
+                <figure class="overview" aria-label="Esper system overview">
+                  <img id="esper-overview" src="/static/assets/esper-overview.png" alt="Diagramma della macchina Esper">
+                  <figcaption>ESPER · SYSTEM OVERVIEW</figcaption>
+                </figure>
+
+                <div class="tray">
+                  <div class="tray-slot"></div>
+                  <div class="tray-label">PHOTO INPUT</div>
+                </div>
+                <h1 id="insert-title">INSERT PHOTO</h1>
+                <p id="insert-sub">Drag &amp; drop a file here, or use the tray below.</p>
+                <div class="insert-actions">
+                  <button class="btn primary" id="btn-open">OPEN FILE</button>
+                  <button class="btn" id="btn-demo">CASE FILE 01</button>
+                </div>
+                <input type="file" id="file" accept="image/*" hidden>
+                <div class="insert-hint">PNG · JPEG · TIFF · WebP — anything the eye can hold.</div>
+              </div>
+            </div>
+
+            <div id="busy">
+              <div class="busy-box">
+                <div class="busy-title" id="busy-title">ENHANCING</div>
+                <div class="busy-bar"><i></i></div>
+                <div class="busy-sub" id="busy-sub">RECONSTRUCTING PIXELS</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- right rail: log + signal + fidelity -->
+        <aside id="rail-right">
+          <div class="rail-title">ANALYSIS LOG</div>
+          <ol id="log" class="log"></ol>
+
+          <div class="rail-title">SIGNAL</div>
+          <div class="signal">
+            <div><span>MODE</span><b id="sig-mode">—</b></div>
+            <div><span>DEVICE</span><b id="sig-device">—</b></div>
+            <div><span>LAST</span><b id="sig-last">—</b></div>
+            <div><span>OUTPUT</span><b id="sig-out">—</b></div>
+            <div><span>PASSES</span><b id="sig-passes">0</b></div>
+            <div><span>TILES</span><b id="sig-tiles">0</b></div>
+          </div>
+
+          <div class="rail-title">GAIN</div>
+          <div class="gain-row">
+            <input type="range" id="in-gain" min="50" max="220" value="100" aria-label="brightness gain">
+            <span id="gain-val">100</span>
+          </div>
+
+          <div class="rail-title">FIDELITY GUARD</div>
+          <div class="fidelity">
+            <div class="fid-bar"><i id="fid-fill"></i><span class="fid-mark" id="fid-mark"></span></div>
+            <div class="fid-labels"><span>VERIFIED</span><span>INTERP.</span><span>GENERATIVE</span></div>
+            <div class="fid-note" id="fid-note">1 source pixel → 1 screen pixel</div>
+          </div>
+
+          <div class="rail-title">VOICE</div>
+          <div class="voice-panel">
+            <div class="voice-meter"><i id="voice-level"></i></div>
+            <div id="voice-text" class="voice-text">—</div>
+            <div class="voice-note" id="voice-note">Mic off. Press MIC or use manual controls.</div>
+          </div>
+        </aside>
+      </main>
+
+      <!-- ─────────────────────────── control console ────────────────────── -->
+      <footer id="console">
+        <div class="trackball-wrap">
+          <div id="trackball" title="Drag to pan — like Deckard's trackball">
+            <div id="trackball-ball"></div>
+            <span class="tb-label">TRACKBALL</span>
+          </div>
+        </div>
+
+        <div class="cmd-grid">
+          <button class="btn cmd" data-cmd="enhance">ENHANCE</button>
+          <button class="btn cmd" data-cmd="movein">MOVE IN</button>
+          <button class="btn cmd" data-cmd="pullout">PULL OUT</button>
+          <button class="btn cmd" data-cmd="hold" title="zoom continuo: si ferma con STOP (H)">HOLD</button>
+          <button class="btn cmd" data-cmd="center">CENTER</button>
+          <button class="btn cmd" data-cmd="trackleft">TRACK ◀</button>
+          <button class="btn cmd" data-cmd="trackright">TRACK ▶</button>
+          <button class="btn cmd" data-cmd="trackup">TRACK ▲</button>
+          <button class="btn cmd" data-cmd="trackdown">TRACK ▼</button>
+          <button class="btn cmd" data-cmd="print">HARD COPY</button>
+          <button class="btn cmd danger" data-cmd="reset">RESET</button>
+        </div>
+
+        <div class="voice-controls">
+          <button class="btn mic" id="btn-mic"><span class="dot"></span>MIC</button>
+          <select id="sel-lang" aria-label="speech language">
+            <option value="it-IT" selected>IT</option>
+            <option value="en-US">EN</option>
+          </select>
+          <div class="modes" role="group" aria-label="render mode">
+            <span class="modes-label">MODE</span>
+            <button class="mode-btn on" data-mode="ai" title="super-resolution neurale">AI</button>
+            <button class="mode-btn" data-mode="pixel" title="solo pixel reali, nessun modello">PIXEL</button>
+            <button class="mode-btn" data-mode="text" title="TTA + pre-contrasto: protegge le lettere">TEXT</button>
+          </div>
+          <div class="modes" role="group" aria-label="image filter">
+            <span class="modes-label">FILTER</span>
+            <button class="mode-btn filt on" data-filter="chromo" title="fosforo ciano: la lastra del film">CROMO</button>
+            <button class="mode-btn filt" data-filter="natural" title="colori reali, nessuna lastra">NAT</button>
+            <button class="mode-btn filt" data-filter="ir" title="falso colore infrarosso">IR</button>
+            <button class="mode-btn filt" data-filter="thermal" title="mappa termica">TERM</button>
+          </div>
+          <label class="chk"><input type="checkbox" id="chk-auto"> AUTO</label>
+          <label class="chk"><input type="checkbox" id="chk-audio" checked> AUDIO</label>
+          <button class="btn" id="btn-sfx" title="Ascolta i quattro effetti estratti dal film">SFX</button>
+          <label class="chk"><input type="checkbox" id="chk-grid" checked> GRID</label>
+          <span class="theme-label">THEME</span>
+          <div class="theme-dots" id="theme-dots" role="group" aria-label="phosphor theme">
+            <button class="tdot on" data-theme="chromo" title="Ciano — la tinta del film"></button>
+            <button class="tdot" data-theme="amber" title="Ambra — fosforo P3"></button>
+            <button class="tdot" data-theme="green" title="Verde — terminale VT100"></button>
+            <button class="tdot" data-theme="red" title="Rosso — sala di controllo"></button>
+            <button class="tdot" data-theme="blue" title="Blu — IBM retro"></button>
+          </div>
+          <button class="btn" id="btn-eject" title="Eject the frame — free the bed for the next one">EJECT</button>
+          <button class="btn" id="btn-tutorial" title="Quick reference — operator card (English)">TUTORIAL</button>
+        </div>
+
+        <div class="legend" id="legend">
+          <span><b>E</b> enhance</span><span><b>+ / −</b> zoom</span><span><b>←↑↓→</b> pan</span>
+          <span><b>C</b> center</span><span><b>P</b> print</span><span><b>S</b> stop</span><span><b>I</b> filter</span><span><b>X</b> eject</span>
+        </div>
+      </footer>
+
+      <!-- ── operator card: il manuale che sta sul coperchio della macchina ── -->
+      <div id="tutorial" class="tut" role="dialog" aria-modal="true" aria-label="Esper quick reference">
+        <div class="tut-card">
+          <header class="tut-head">
+            <h2>ESPER — QUICK REFERENCE</h2>
+            <span class="tut-sub">TYRELL CORP. · PHOTO ANALYSIS UNIT</span>
+            <button class="tut-x" id="tut-close" aria-label="close">✕</button>
+          </header>
+          <div class="tut-body">
+            <section>
+              <h3>VOICE · ENGLISH</h3>
+              <dl>
+                <dt>“enhance”</dt><dd>analyse the frame</dd>
+                <dt>“enhance 224 to 176”</dt><dd>enhance a range of native pixels</dd>
+                <dt>“move in” / “pull out”</dt><dd>zoom in / out</dd>
+                <dt>“track 45 right”</dt><dd>pan 45 pixels</dd>
+                <dt>“hold” / “continuous zoom”</dt><dd>keep zooming until “stop”</dd>
+                <dt>“hold in” / “hold out”</dt><dd>keep zooming in / out</dd>
+                <dt>“center”</dt><dd>recentre the view</dd>
+                <dt>“hard copy”</dt><dd>export the frame</dd>
+                <dt>“filter infrared”</dt><dd>change plate</dd>
+                <dt>“go back”</dt><dd>undo the last move</dd>
+                <dt>“eject”</dt><dd>free the bed for the next frame</dd>
+                <dt>“tutorial” / “help”</dt><dd>open this card</dd>
+                <dt>“theme amber” / “red” / “green”</dt><dd>phosphor colour</dd>
+              </dl>
+            </section>
+            <section>
+              <h3>VOICE · ITALIANO</h3>
+              <dl>
+                <dt>«analizza» / «migliora»</dt><dd>enhance</dd>
+                <dt>«analizza da 224 a 176»</dt><dd>fascia di pixel nativi</dd>
+                <dt>«avvicina» / «più vicino»</dt><dd>zoom avanti</dd>
+                <dt>«allontana» / «più lontano»</dt><dd>zoom indietro</dd>
+                <dt>«continua» / «zoom continuo»</dt><dd>zoom continuo fino a «fermati»</dd>
+                <dt>«fermati» / «basta»</dt><dd>stop</dd>
+                <dt>«centra»</dt><dd>ricentra la vista</dd>
+                <dt>«sinistra» / «destra»</dt><dd>pan orizzontale</dd>
+                <dt>«sali» / «scendi»</dt><dd>pan verticale</dd>
+                <dt>«stampa» / «salva» / «copia»</dt><dd>hard copy</dd>
+                <dt>«metti infrarosso» / «termico»</dt><dd>cambia lastra</dd>
+                <dt>«annulla» / «torna indietro»</dt><dd>annulla l'ultima mossa</dd>
+                <dt>«espelli» / «cambia foto»</dt><dd>espelle la lastra</dd>
+                <dt>«aiuto» / «manuale»</dt><dd>apre questa card</dd>
+              </dl>
+              <div class="tut-tip">La voce gira su questo Mac (whisper.cpp) — nessun audio esce.
+              Sinonimi e parole storpiate sono accettati: dillo a modo tuo.
+              Coordinate fuori lastra o fascia nulla → suono d'errore, nessun ritaglio.</div>
+            </section>
+            <section>
+              <h3>MOUSE</h3>
+              <dl>
+                <dt>drag</dt><dd>trackball — pan the frame</dd>
+                <dt>wheel</dt><dd>zoom at the cursor</dd>
+                <dt>click</dt><dd>select a region</dd>
+                <dt>shift + drag</dt><dd>faster pan</dd>
+              </dl>
+              <h3>KEYBOARD</h3>
+              <dl>
+                <dt><kbd>E</kbd></dt><dd>enhance</dd>
+                <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>zoom</dd>
+                <dt><kbd>←↑↓→</kbd></dt><dd>pan</dd>
+                <dt><kbd>C</kbd></dt><dd>center</dd>
+                <dt><kbd>P</kbd></dt><dd>hard copy</dd>
+                <dt><kbd>H</kbd></dt><dd>hold — continuous zoom</dd>
+                <dt><kbd>S</kbd></dt><dd>stop</dd>
+                <dt><kbd>F</kbd></dt><dd>fit to screen</dd>
+                <dt><kbd>I</kbd></dt><dd>cycle plate</dd>
+                <dt><kbd>X</kbd></dt><dd>eject the frame</dd>
+                <dt><kbd>T</kbd></dt><dd>cycle phosphor theme</dd>
+              </dl>
+            </section>
+            <section>
+              <h3>MODES</h3>
+              <dl>
+                <dt>AI</dt><dd>neural super-resolution — reconstructs detail</dd>
+                <dt>PIXEL</dt><dd>the actual pixels, no model, no invention</dd>
+                <dt>TEXT</dt><dd>character-safe: pre-contrast + TTA</dd>
+              </dl>
+            </section>
+            <section>
+              <h3>PLATES</h3>
+              <dl>
+                <dt>CROMO</dt><dd>cyan phosphor — the film look</dd>
+                <dt>NATURAL</dt><dd>true colour</dd>
+                <dt>IR</dt><dd>near-infrared false colour</dd>
+                <dt>THERMAL</dt><dd>heat map</dd>
+              </dl>
+            </section>
+          </div>
+          <div class="tut-foot">
+            FIDELITY GUARD — up to 2× real · 2–4× interpolated · beyond 4× generated.
+            A <b>+</b> mark means you are looking at a synthesised level.
+            Press <kbd>ESC</kbd> to close.
+          </div>
+        </div>
+      </div>
+    </div><!-- /screen -->
+    <div id="bezel-vignette"></div>
+  </div><!-- /bezel -->
+</div>
+
+<script src="/static/js/esper.js"></script>
+</body>
+</html>
